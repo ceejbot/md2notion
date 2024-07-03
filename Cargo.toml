@@ -1,0 +1,18 @@
+[package]
+name = "md2notion"
+description = "A library to convert gfm markdown to Notion document blocks."
+version = "0.1.0"
+edition = "2021"
+authors = ["C J Silverio <ceejceej@gmail.com>"]
+readme = "README.md"
+license = "Parity-7.0.0"
+categories = ["parsing", "text-processing"]
+keywords = ["commonmark", "markdown", "notion"]
+repository = "https://github.com/ceejbot/md2notion"
+homepage = "https://github.com/ceejbot/md2notion"
+
+[dependencies]
+markdown = "1.0.0-alpha.17"
+notion-client = "1.0.0"
+serde_json = "1.0.117"
+thiserror = "1.0.61"
