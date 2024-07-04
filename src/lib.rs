@@ -33,6 +33,7 @@ struct State {
     list: ListVariation,
     ordered_start: u32,
     links: HashMap<String, String>,
+    images: HashMap<String, mdast::Image>,
 }
 
 impl State {
@@ -41,6 +42,7 @@ impl State {
             list: ListVariation::None,
             ordered_start: 1,
             links: HashMap::new(),
+            images: HashMap::new(),
         }
     }
 
@@ -54,25 +56,31 @@ impl State {
 
     /// Render the passed-in vector of nodes.
     fn render_nodes(&mut self, nodelist: &[Node]) -> Vec<Block> {
-        self.links = State::collect_definitions(nodelist);
+        self.collect_definitions(nodelist);
         nodelist
             .iter()
-            .map(|xs| self.render_node(xs))
-            .flatten()
+            .flat_map(|xs| self.render_node(xs))
             .collect::<Vec<Block>>()
     }
 
-    /// Collect link definitions.
-    fn collect_definitions(nodelist: &[Node]) -> HashMap<String, String> {
-        nodelist
-            .iter()
-            .filter_map(|xs| {
-                let Node::Definition(definition) = xs else {
-                    return None;
-                };
-                Some((definition.identifier.clone(), definition.url.clone()))
-            })
-            .collect()
+    /// Collect definitions for images and links, which can be referred to
+    /// many times in a single markdown document.
+    fn collect_definitions(&mut self, nodelist: &[Node]) {
+        let mut links = HashMap::new();
+        let mut images = HashMap::new();
+
+        nodelist.iter().for_each(|xs| match xs {
+            Node::Image(image) => {
+                images.insert(image.alt.clone(), image.clone());
+            }
+            Node::Definition(definition) => {
+                links.insert(definition.identifier.clone(), definition.url.clone());
+            }
+            _ => {}
+        });
+
+        self.links = links;
+        self.images = images;
     }
 
     /// Render a node that becomes either a single Notion block or a vec of them.
@@ -82,8 +90,7 @@ impl State {
             // Node::Root(_) => Vec::new(),
             Node::BlockQuote(quote) => vec![self.render_quote(quote)],
             Node::FootnoteDefinition(footnote) => vec![self.render_footnote(footnote)],
-            Node::List(list) => self.begin_list(list), // the only one that actually returns a vec?
-            Node::FootnoteReference(reference) => vec![self.render_noteref(reference)],
+            Node::List(list) => self.begin_list(list), // the only one that actually returns a vec? ugh
             Node::Html(html) => vec![self.render_html(html)],
             Node::Image(image) => vec![self.render_image(image)],
             Node::ImageReference(imgref) => vec![self.render_image_ref(imgref)],
@@ -103,10 +110,11 @@ impl State {
     /// Render a node type that becomes Notion rich text.
     fn render_text_node(&self, node: &Node) -> RichText {
         match node {
-            Node::InlineCode(inline) => self.render_inline_code(inline),
-            Node::InlineMath(math) => self.render_inline_math(math),
             Node::Delete(deletion) => self.render_deletion(deletion),
             Node::Emphasis(emphasized) => self.render_emphasized(emphasized),
+            Node::FootnoteReference(reference) => self.render_noteref(reference),
+            Node::InlineCode(inline) => self.render_inline_code(inline),
+            Node::InlineMath(math) => self.render_inline_math(math),
             Node::Link(link) => self.render_link(link),
             Node::LinkReference(linkref) => self.render_linkref(linkref),
             Node::Strong(strong) => self.render_strong(strong),
@@ -134,6 +142,7 @@ impl State {
         }
     }
 
+    /// Convenience for turning a text range into a rich text blob given a style annotation.
     fn make_into_rich_text(children: &[Node], style: Annotations) -> RichText {
         let content: String = children
             .iter()
@@ -313,13 +322,24 @@ impl State {
         }
     }
 
-    // I am unsure about this
-    fn render_noteref(&self, _noteref: &mdast::FootnoteReference) -> Block {
-        todo!()
-    }
-
-    fn render_image_ref(&self, _imgref: &mdast::ImageReference) -> Block {
-        todo!()
+    /// Fragment links are a amajor PITA. You _can_ link to blocks, but you have to get their
+    /// ids first, which means they have to be created first. So we're going to punt and make
+    /// this look like a footnote, but not include the link part part of the WWW. How 1992 of us.
+    fn render_noteref(&self, noteref: &mdast::FootnoteReference) -> RichText {
+        let annotations = Annotations {
+            color: notion_client::objects::rich_text::TextColor::Gray,
+            ..Default::default()
+        };
+        let text = Text {
+            content: noteref.identifier.clone(),
+            link: None,
+        };
+        RichText::Text {
+            text,
+            annotations: Some(annotations),
+            plain_text: Some(noteref.identifier.clone()),
+            href: None,
+        }
     }
 
     fn begin_table(&mut self, intable: &mdast::Table) -> Block {
@@ -332,8 +352,21 @@ impl State {
         };
 
         let children = self.render_nodes(intable.children.as_slice());
+
+        // Now we look at children and find the row with the largest number of
+        // cells. That's our table width.
+
+        // TODO: Rows that are shorter than this need to be padded out.
+        // Who knew markdown was so flexible and Notion so inflexible?
+        // Answer: Anybody who looked at them both.
+
+        let longest: u32 = children.iter().fold(1, |acc, xs| match &xs.block_type {
+            BlockType::TableRow { table_row } => std::cmp::max(acc, table_row.cells.len() as u32),
+            _ => acc,
+        });
+
         let table = TableValue {
-            table_width: 100, // this is a guess
+            table_width: longest,
             has_column_header: false,
             has_row_header,
             children: Some(children),
@@ -426,8 +459,6 @@ impl State {
     }
 
     fn render_math(&self, math: &mdast::Math) -> Block {
-        // math.meta
-        // math.value
         let equation = EquationValue {
             expression: math.value.clone(),
         };
@@ -457,6 +488,18 @@ impl State {
         Block {
             block_type: BlockType::Code { code },
             ..Default::default()
+        }
+    }
+
+    /// Img block pointing to a previously declared image.
+    fn render_image_ref(&self, imgref: &mdast::ImageReference) -> Block {
+        if let Some(image) = self.images.get(&imgref.identifier) {
+            self.render_image(image)
+        } else {
+            Block {
+                block_type: BlockType::None,
+                ..Default::default()
+            }
         }
     }
 
