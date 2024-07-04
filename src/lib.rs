@@ -5,11 +5,12 @@ mod tests;
 
 use std::collections::HashMap;
 
-use markdown::mdast::{self, Break, LinkReference, Node, ReferenceKind};
+use markdown::mdast::{self, Node};
 use markdown::{to_mdast, ParseOptions};
+use notion_client::objects::block::*;
 use notion_client::objects::emoji::Emoji;
+use notion_client::objects::file::{ExternalFile, File};
 use notion_client::objects::rich_text::{Annotations, Equation, Link, RichText, Text};
-use notion_client::objects::{block::*, rich_text};
 
 /// Convert a string slice containing Markdown into a vector of Notion document blocks.
 pub fn convert(input: &str) -> Vec<Block> {
@@ -27,12 +28,11 @@ enum ListVariation {
     Ordered,
 }
 
-// first take on this
+// We need to track a little state when we're rendering lists, which can be nested.
 struct State {
     list: ListVariation,
     ordered_start: u32,
     links: HashMap<String, String>,
-    footnotes: HashMap<String, String>,
 }
 
 impl State {
@@ -41,7 +41,6 @@ impl State {
             list: ListVariation::None,
             ordered_start: 1,
             links: HashMap::new(),
-            footnotes: HashMap::new(),
         }
     }
 
@@ -55,7 +54,7 @@ impl State {
 
     /// Render the passed-in vector of nodes.
     fn render_nodes(&mut self, nodelist: &[Node]) -> Vec<Block> {
-        self.links = self.collect_definitions(nodelist);
+        self.links = State::collect_definitions(nodelist);
         nodelist
             .iter()
             .map(|xs| self.render_node(xs))
@@ -64,7 +63,7 @@ impl State {
     }
 
     /// Collect link definitions.
-    fn collect_definitions(&self, nodelist: &[Node]) -> HashMap<String, String> {
+    fn collect_definitions(nodelist: &[Node]) -> HashMap<String, String> {
         nodelist
             .iter()
             .filter_map(|xs| {
@@ -76,24 +75,24 @@ impl State {
             .collect()
     }
 
-    /// Render a node that becomes a Notion block.
-    pub fn render_node(&mut self, node: &Node) -> Vec<Block> {
+    /// Render a node that becomes either a single Notion block or a vec of them.
+    /// This is a little clunky.
+    fn render_node(&mut self, node: &Node) -> Vec<Block> {
         match node {
-            // Node::Root(_) => todo!(),
+            // Node::Root(_) => Vec::new(),
             Node::BlockQuote(quote) => vec![self.render_quote(quote)],
             Node::FootnoteDefinition(footnote) => vec![self.render_footnote(footnote)],
-            Node::List(list) => self.begin_list(list),
+            Node::List(list) => self.begin_list(list), // the only one that actually returns a vec?
             Node::FootnoteReference(reference) => vec![self.render_noteref(reference)],
             Node::Html(html) => vec![self.render_html(html)],
             Node::Image(image) => vec![self.render_image(image)],
-            Node::ImageReference(_imgref) => todo!(),
+            Node::ImageReference(imgref) => vec![self.render_image_ref(imgref)],
             Node::Code(code) => vec![self.render_code(code)],
             Node::Math(math) => vec![self.render_math(math)],
             Node::Heading(heading) => vec![self.render_heading(heading)],
-            Node::Table(_) => todo!(),
+            Node::Table(table) => vec![self.begin_table(table)],
+            Node::TableRow(row) => vec![self.table_row(row)],
             Node::ThematicBreak(div) => vec![self.render_divider(div)],
-            Node::TableRow(_) => todo!(),
-            Node::TableCell(_) => todo!(),
             Node::ListItem(list_item) => vec![self.render_list_item(list_item)],
             Node::Paragraph(paragraph) => vec![self.render_paragraph(paragraph)],
             // All unhandled node types are deliberately skipped.
@@ -102,7 +101,7 @@ impl State {
     }
 
     /// Render a node type that becomes Notion rich text.
-    fn render_text_node(&mut self, node: &Node) -> RichText {
+    fn render_text_node(&self, node: &Node) -> RichText {
         match node {
             Node::InlineCode(inline) => self.render_inline_code(inline),
             Node::InlineMath(math) => self.render_inline_math(math),
@@ -116,7 +115,10 @@ impl State {
         }
     }
 
-    fn render_text(&mut self, input: &mdast::Text) -> RichText {
+    // Repeat yourself to find patterns, I say, doggedly.
+
+    /// Render plain text.
+    fn render_text(&self, input: &mdast::Text) -> RichText {
         let text = Text {
             content: input.value.clone(),
             link: None,
@@ -132,11 +134,8 @@ impl State {
         }
     }
 
-    fn render_strong(&mut self, strong: &mdast::Strong) -> RichText {
-        // One very nice thing we know is that markdown styles are NOT
-        // nested. You get emphasis, or you get strong. You don't get both.
-        let content: String = strong
-            .children
+    fn make_into_rich_text(children: &[Node], style: Annotations) -> RichText {
+        let content: String = children
             .iter()
             .filter_map(|xs| match xs {
                 Node::Text(ref t) => Some(t.value.clone()),
@@ -149,46 +148,40 @@ impl State {
             content: content.clone(),
             link: None,
         };
+
+        RichText::Text {
+            text,
+            annotations: Some(style),
+            plain_text: Some(content),
+            href: None,
+        }
+    }
+
+    fn render_strong(&self, strong: &mdast::Strong) -> RichText {
         let annotations = Annotations {
             bold: true,
             ..Default::default()
         };
-        RichText::Text {
-            text,
-            annotations: Some(annotations),
-            plain_text: Some(content),
-            href: None,
-        }
+        State::make_into_rich_text(strong.children.as_slice(), annotations)
     }
 
-    fn render_emphasized(&mut self, emphasized: &mdast::Emphasis) -> RichText {
-        let content: String = emphasized
-            .children
-            .iter()
-            .filter_map(|xs| match xs {
-                Node::Text(ref t) => Some(t.value.clone()),
-                _ => None,
-            })
-            .collect::<Vec<String>>()
-            .join("");
-
-        let text = Text {
-            content: content.clone(),
-            link: None,
-        };
+    fn render_emphasized(&self, emphasized: &mdast::Emphasis) -> RichText {
         let annotations = Annotations {
             italic: true,
             ..Default::default()
         };
-        RichText::Text {
-            text,
-            annotations: Some(annotations),
-            plain_text: Some(content),
-            href: None,
-        }
+        State::make_into_rich_text(emphasized.children.as_slice(), annotations)
     }
 
-    fn render_link(&mut self, mdlink: &mdast::Link) -> RichText {
+    fn render_deletion(&self, strike: &mdast::Delete) -> RichText {
+        let annotations = Annotations {
+            strikethrough: true,
+            ..Default::default()
+        };
+        State::make_into_rich_text(strike.children.as_slice(), annotations)
+    }
+
+    fn render_link(&self, mdlink: &mdast::Link) -> RichText {
         let content: String = mdlink
             .children
             .iter()
@@ -218,7 +211,7 @@ impl State {
         }
     }
 
-    fn render_linkref(&mut self, linkref: &mdast::LinkReference) -> RichText {
+    fn render_linkref(&self, linkref: &mdast::LinkReference) -> RichText {
         let content: String = linkref
             .children
             .iter()
@@ -248,34 +241,7 @@ impl State {
         }
     }
 
-    fn render_deletion(&mut self, strike: &mdast::Delete) -> RichText {
-        let content: String = strike
-            .children
-            .iter()
-            .filter_map(|xs| match xs {
-                Node::Text(ref t) => Some(t.value.clone()),
-                _ => None,
-            })
-            .collect::<Vec<String>>()
-            .join("");
-
-        let text = Text {
-            content: content.clone(),
-            link: None,
-        };
-        let annotations = Annotations {
-            strikethrough: true,
-            ..Default::default()
-        };
-        RichText::Text {
-            text,
-            annotations: Some(annotations),
-            plain_text: Some(content),
-            href: None,
-        }
-    }
-
-    fn render_inline_code(&mut self, inline: &mdast::InlineCode) -> RichText {
+    fn render_inline_code(&self, inline: &mdast::InlineCode) -> RichText {
         let text = Text {
             content: inline.value.clone(),
             link: None,
@@ -292,7 +258,7 @@ impl State {
         }
     }
 
-    fn render_inline_math(&mut self, math: &mdast::InlineMath) -> RichText {
+    fn render_inline_math(&self, math: &mdast::InlineMath) -> RichText {
         let equation = Equation {
             expression: math.value.clone(),
         };
@@ -309,7 +275,7 @@ impl State {
         }
     }
 
-    fn render_quote(&mut self, quote: &mdast::BlockQuote) -> Block {
+    fn render_quote(&self, quote: &mdast::BlockQuote) -> Block {
         let rich_text: Vec<RichText> = quote
             .children
             .iter()
@@ -326,7 +292,7 @@ impl State {
         }
     }
 
-    fn render_footnote(&mut self, footnote: &mdast::FootnoteDefinition) -> Block {
+    fn render_footnote(&self, footnote: &mdast::FootnoteDefinition) -> Block {
         let rich_text = footnote
             .children
             .iter()
@@ -348,13 +314,61 @@ impl State {
     }
 
     // I am unsure about this
-    fn render_noteref(&mut self, _noteref: &mdast::FootnoteReference) -> Block {
+    fn render_noteref(&self, _noteref: &mdast::FootnoteReference) -> Block {
         todo!()
     }
 
-    fn begin_list(&mut self, list: &mdast::List) -> Vec<Block> {
-        // list.ordered
-        // list.start
+    fn render_image_ref(&self, _imgref: &mdast::ImageReference) -> Block {
+        todo!()
+    }
+
+    fn begin_table(&mut self, intable: &mdast::Table) -> Block {
+        let has_row_header = if let Some(_first) = intable.align.first() {
+            // well, this is probably wrong, but I dunno if I am getting this info
+            // with my current markdown parser settings. hrm.
+            true
+        } else {
+            false
+        };
+
+        let children = self.render_nodes(intable.children.as_slice());
+        let table = TableValue {
+            table_width: 100, // this is a guess
+            has_column_header: false,
+            has_row_header,
+            children: Some(children),
+        };
+        Block {
+            block_type: BlockType::Table { table },
+            ..Default::default()
+        }
+    }
+
+    fn table_row(&self, row: &mdast::TableRow) -> Block {
+        let cells: Vec<Vec<RichText>> = row
+            .children
+            .iter()
+            .filter_map(|xs| match xs {
+                Node::TableCell(cell) => Some(self.table_cell(cell)),
+                _ => None,
+            })
+            .collect();
+
+        let table_row = TableRowsValue { cells };
+        Block {
+            block_type: BlockType::TableRow { table_row },
+            ..Default::default()
+        }
+    }
+
+    fn table_cell(&self, cell: &mdast::TableCell) -> Vec<RichText> {
+        cell.children
+            .iter()
+            .map(|xs| self.render_text_node(xs))
+            .collect()
+    }
+
+    fn begin_list(&self, list: &mdast::List) -> Vec<Block> {
         let mut state = State::new();
         state.list = if list.ordered {
             ListVariation::Ordered
@@ -367,7 +381,7 @@ impl State {
         state.render_nodes(list.children.as_slice())
     }
 
-    fn render_paragraph(&mut self, para: &mdast::Paragraph) -> Block {
+    fn render_paragraph(&self, para: &mdast::Paragraph) -> Block {
         let rich_text: Vec<RichText> = para
             .children
             .iter()
@@ -384,7 +398,7 @@ impl State {
         }
     }
 
-    fn render_code(&mut self, fenced: &mdast::Code) -> Block {
+    fn render_code(&self, fenced: &mdast::Code) -> Block {
         let language = if let Some(langstr) = fenced.lang.as_ref() {
             serde_json::from_str(langstr.as_str()).unwrap_or(Language::PlainText)
         } else {
@@ -411,7 +425,7 @@ impl State {
         }
     }
 
-    fn render_math(&mut self, math: &mdast::Math) -> Block {
+    fn render_math(&self, math: &mdast::Math) -> Block {
         // math.meta
         // math.value
         let equation = EquationValue {
@@ -424,7 +438,7 @@ impl State {
     }
 
     // This is a hack. There really isn't an equivalent AFAICT.
-    fn render_html(&mut self, html: &mdast::Html) -> Block {
+    fn render_html(&self, html: &mdast::Html) -> Block {
         let text = Text {
             content: html.value.clone(),
             link: None,
@@ -446,20 +460,18 @@ impl State {
         }
     }
 
-    fn render_image(&mut self, image: &mdast::Image) -> Block {
-        todo!()
-    }
-
-    fn render_table(&mut self, text: &str) -> Block {
-        todo!()
-    }
-
-    fn render_table_row(&mut self, text: &str) -> Block {
-        todo!()
-    }
-
-    fn render_todo(&mut self, text: &str) -> Block {
-        todo!()
+    fn render_image(&self, image: &mdast::Image) -> Block {
+        // TODO: For now. What we should do is figure out if this is a local image and upload
+        // if so and make a local file url.
+        let external = ExternalFile {
+            url: image.url.clone(),
+        };
+        let file_type = File::External { external };
+        let image = ImageValue { file_type };
+        Block {
+            block_type: BlockType::Image { image },
+            ..Default::default()
+        }
     }
 
     fn render_list_item(&mut self, item: &mdast::ListItem) -> Block {
@@ -506,7 +518,7 @@ impl State {
         }
     }
 
-    fn render_divider(&mut self, _thematic: &mdast::ThematicBreak) -> Block {
+    fn render_divider(&self, _thematic: &mdast::ThematicBreak) -> Block {
         let divider = DividerValue {};
         Block {
             block_type: BlockType::Divider { divider },
@@ -514,7 +526,7 @@ impl State {
         }
     }
 
-    fn render_heading(&mut self, heading: &mdast::Heading) -> Block {
+    fn render_heading(&self, heading: &mdast::Heading) -> Block {
         let rich_text: Vec<RichText> = heading
             .children
             .iter()

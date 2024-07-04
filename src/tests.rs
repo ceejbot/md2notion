@@ -95,4 +95,14 @@ mod tests {
             eprintln!("{xs:?}");
         });
     }
+
+    #[test]
+    fn complex_with_tables() {
+        let input = include_str!("../fixtures/table.md");
+        let result = convert(input);
+        assert_eq!(result.len(), 16);
+        let table = result[10].clone();
+        eprintln!("{table:?}");
+        assert!(matches!(table.block_type, BlockType::Table { table }));
+    }
 }
