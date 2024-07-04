@@ -25,7 +25,7 @@ mod tests {
         let result = convert(input);
         assert_eq!(result.len(), 4);
         result.iter().for_each(|xs| {
-            let item = match &xs.block_type {
+            let _item = match &xs.block_type {
                 BlockType::BulletedListItem { bulleted_list_item } => bulleted_list_item,
                 _ => {
                     panic!("expected a bulleted list item; got {xs:?}");
@@ -103,6 +103,6 @@ mod tests {
         assert_eq!(result.len(), 16);
         let table = result[10].clone();
         eprintln!("{table:?}");
-        assert!(matches!(table.block_type, BlockType::Table { table }));
+        assert!(matches!(table.block_type, BlockType::Table { .. }));
     }
 }
