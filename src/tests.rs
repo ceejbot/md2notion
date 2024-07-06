@@ -4,8 +4,7 @@ mod tests {
 
     #[test]
     fn rich_text() {
-        let input =
-            "This _markdown_ file has *only* some `text` styles in it, ~not much~ nothing more.";
+        let input = "This _markdown_ file has *only* some `text` styles in it, ~not much~ nothing more.";
         let result = convert(input);
         assert_eq!(result.len(), 1);
         let block = result.first().expect("we expect one block");
@@ -90,10 +89,7 @@ mod tests {
     fn most_syntax() {
         let input = include_str!("../fixtures/more_complex.md");
         let result = convert(input);
-        // assert_eq!(result.len(), 4);
-        result.iter().for_each(|xs| {
-            eprintln!("{xs:?}");
-        });
+        assert_eq!(result.len(), 102);
     }
 
     #[test]
@@ -102,7 +98,22 @@ mod tests {
         let result = convert(input);
         assert_eq!(result.len(), 16);
         let table = result[10].clone();
-        eprintln!("{table:?}");
         assert!(matches!(table.block_type, BlockType::Table { .. }));
+    }
+
+    #[test]
+    fn gfm_parsing() {
+        let input = include_str!("../fixtures/gfm-test.md");
+        let result = convert(input);
+        assert_eq!(result.len(), 36);
+        let block10 = result[10].clone();
+        eprintln!("{block10:?}");
+        assert!(matches!(block10.block_type, BlockType::Heading3 { .. }));
+        let _heading3 = match block10.block_type {
+            BlockType::Heading3 { heading_3 } => heading_3,
+            _ => {
+                panic!("expected heading 3 block type");
+            }
+        };
     }
 }
