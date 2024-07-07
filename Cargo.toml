@@ -10,6 +10,7 @@ categories = ["parsing", "text-processing"]
 keywords = ["commonmark", "markdown", "notion"]
 repository = "https://github.com/ceejbot/md2notion"
 homepage = "https://github.com/ceejbot/md2notion"
+rust-version = "1.67.1"
 
 [dependencies]
 markdown = "1.0.0-alpha.18"

@@ -131,9 +131,7 @@ impl State {
             content: input.value.clone(),
             link: None,
         };
-        let annotations = Annotations {
-            ..Default::default()
-        };
+        let annotations = Annotations { ..Default::default() };
         RichText::Text {
             text,
             annotations: Some(annotations),
@@ -285,11 +283,7 @@ impl State {
     }
 
     fn render_quote(&self, quote: &mdast::BlockQuote) -> Block {
-        let rich_text: Vec<RichText> = quote
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text: Vec<RichText> = quote.children.iter().map(|xs| self.render_text_node(xs)).collect();
         let quote = QuoteValue {
             rich_text,
             color: TextColor::Default,
@@ -302,13 +296,9 @@ impl State {
     }
 
     fn render_footnote(&self, footnote: &mdast::FootnoteDefinition) -> Block {
-        let rich_text = footnote
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text = footnote.children.iter().map(|xs| self.render_text_node(xs)).collect();
         let emoji = Emoji {
-            emoji: "🗒️".to_string(),
+            emoji: "🗒️".to_string()
         };
         let icon = notion_client::objects::block::Icon::Emoji(emoji);
         let callout = CalloutValue {
@@ -395,10 +385,7 @@ impl State {
     }
 
     fn table_cell(&self, cell: &mdast::TableCell) -> Vec<RichText> {
-        cell.children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect()
+        cell.children.iter().map(|xs| self.render_text_node(xs)).collect()
     }
 
     fn begin_list(&self, list: &mdast::List) -> Vec<Block> {
@@ -415,11 +402,7 @@ impl State {
     }
 
     fn render_paragraph(&self, para: &mdast::Paragraph) -> Block {
-        let rich_text: Vec<RichText> = para
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text: Vec<RichText> = para.children.iter().map(|xs| self.render_text_node(xs)).collect();
         let paragraph = ParagraphValue {
             rich_text,
             color: Some(TextColor::Default),
@@ -437,6 +420,7 @@ impl State {
         } else {
             Language::PlainText
         };
+
         let text = Text {
             content: fenced.value.clone(),
             link: None,
@@ -506,9 +490,7 @@ impl State {
     fn render_image(&self, image: &mdast::Image) -> Block {
         // TODO: For now. What we should do is figure out if this is a local image and upload
         // if so and make a local file url.
-        let external = ExternalFile {
-            url: image.url.clone(),
-        };
+        let external = ExternalFile { url: image.url.clone() };
         let file_type = File::External { external };
         let image = ImageValue { file_type };
         Block {
@@ -527,11 +509,7 @@ impl State {
 
     fn render_numbered_li(&mut self, item: &mdast::ListItem) -> Block {
         let child_blocks = self.render_nodes(item.children.as_slice());
-        let rich_text: Vec<RichText> = item
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text: Vec<RichText> = item.children.iter().map(|xs| self.render_text_node(xs)).collect();
         let numbered_list_item = NumberedListItemValue {
             rich_text,
             color: TextColor::Default,
@@ -544,11 +522,7 @@ impl State {
     }
 
     fn rendered_bullet_li(&mut self, item: &mdast::ListItem) -> Block {
-        let rich_text: Vec<RichText> = item
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text: Vec<RichText> = item.children.iter().map(|xs| self.render_text_node(xs)).collect();
         let children = self.render_nodes(item.children.as_slice());
         let bulleted_list_item = BulletedListItemValue {
             rich_text,
@@ -570,11 +544,7 @@ impl State {
     }
 
     fn render_heading(&self, heading: &mdast::Heading) -> Block {
-        let rich_text: Vec<RichText> = heading
-            .children
-            .iter()
-            .map(|xs| self.render_text_node(xs))
-            .collect();
+        let rich_text: Vec<RichText> = heading.children.iter().map(|xs| self.render_text_node(xs)).collect();
 
         let value = HeadingsValue {
             rich_text,
